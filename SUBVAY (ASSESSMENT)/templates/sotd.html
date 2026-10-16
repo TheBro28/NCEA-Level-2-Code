@@ -9,7 +9,7 @@
     {% if offer %}
     <!-- This does the math to figure out the discount price (Original Price minus Savings) -->
     {% set sale_price = offer[4] - offer[5] %}
-    
+
     <!-- This creates the box card that holds the sub of the day details -->
     <div class="sotd-detail-card">
         <!-- Shows the current day of the week, like "Monday's Sub of the Day" -->
@@ -42,7 +42,7 @@
         <!-- A text link with a left arrow that lets the customer go back to the offers page -->
         <a href="{{ url_for('offers') }}" class="sotd-detail-back">&larr; Back to Offers</a>
     </div>
-    
+
     <!-- If there is no sub of the day, show this message instead -->
     {% else %}
     <p>No offer is set up for today yet.</p>

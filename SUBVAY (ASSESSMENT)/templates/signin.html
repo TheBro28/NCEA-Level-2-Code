@@ -15,7 +15,7 @@
         <!-- Sends the typed email and password to the server when submitted -->
         <form action="{{ url_for('handle_login_data') }}" method="POST">
             <h2>Login</h2>
-            
+
             <!-- Shows a red error message if the login attempt failed -->
             {% if warning %}
                 <p style="color: #dc3545; font-weight: 500; text-align: center; margin-bottom: 15px;">Invalid email or password.</p>
@@ -24,10 +24,10 @@
             <!-- Where the customer types their email and password -->
             <input type="email" name="email" placeholder="Email" required>
             <input type="password" name="password" placeholder="Password" required>
-            
+
             <!-- The login button -->
             <button type="submit" name="login">Login</button>
-            
+
             <!-- Clicking this swaps over to the register box instead -->
             <p>Don't have an account? <a href="#" onclick="showForm('register-form')">Register</a></p>
         </form>
@@ -42,22 +42,22 @@
         <!-- Sends the new account details to the server when submitted -->
         <form action="{{ url_for('handle_register_data') }}" method="POST">
             <h2>Register</h2>
-            
+
             <!-- Shows a red error message if something went wrong signing up -->
             {% if register_warning %}
                 <p style="color: #dc3545; font-weight: 500; text-align: center; margin-bottom: 15px;">{{ register_warning }}</p>
             {% endif %}
-            
+
             <!-- The new customer's basic details -->
             <input type="text" name="firstname" placeholder="First name" required>
             <input type="text" name="lastname" placeholder="Last name" required>
             <input type="email" name="email" placeholder="Email" required>
             <input type="text" name="phonenumber" placeholder="Phone number" required>
-            
+
             <!-- The password, typed twice to make sure it's correct -->
             <input type="password" name="password" placeholder="Password" required>
             <input type="password" name="conpassword" placeholder="Confirm password" required>
-            
+
             <!-- Picks which store they usually collect from -->
             <select name="prefstore" required>
                 <option value="">--Select Preferred Store--</option>
@@ -87,7 +87,7 @@
                 <option value="78 Beach Road, Store 24">78 Beach Road, Store 24</option>
                 <option value="174a Mawhera Quay, Store 25">174a Mawhera Quay, Store 25</option>
             </select>
-            
+
             <!-- Picks their gender -->
             <select name="gender" required>
                 <option value="">--Select Gender--</option>
@@ -95,10 +95,10 @@
                 <option value="Female">Female</option>
                 <option value="Other">Other</option>
             </select>
-            
+
             <!-- The register button -->
             <button type="submit" name="Register">Register</button>
-            
+
             <!-- Clicking this swaps back to the login box -->
             <p>Already have an account? <a href="#" onclick="showForm('login-form')">Login</a></p>
         </form>

@@ -1,8 +1,14 @@
-""" This is the main Python file for the Subvay website. It handles all the pages, forms, and database queries. """
+""" This is the main Python file for the Subvay website.
+
+It handles all the pages, forms, and database queries.
+"""
 
 # Import the tools needed to build the website and handle data
-from flask import Flask, g, render_template, request, redirect, session, url_for, Blueprint, flash
-import sqlite3, hashlib
+from flask import (
+    Flask, g, render_template, request, redirect,
+    session, url_for, Blueprint, flash
+)
+import sqlite3, hashlib, os
 from datetime import datetime, timedelta
 
 # The name of the database file
@@ -11,10 +17,18 @@ DATABASE = 'subvay.db'
 # Creates the website application
 app = Flask(__name__, static_folder='Static')
 # A secret code Flask uses to keep login sessions safe
-app.secret_key = '4a9f83b21cde567890abcdef1234567890abcdef12345678' 
+SECRET_KEY = os.environ.get("MY_SECRET_KEY")
+
+if not SECRET_KEY:
+    raise ValueError(
+        "My secret key is not set. Please set the MY_SECRET_KEY "
+        "environment variable."
+    )
+print(f"Successfully loaded key: {SECRET_KEY[:3]}...")
 
 # Opens a connection to the database, reusing the same one for this page load
-def get_db():
+"""a"""
+def get_db():   
     db = getattr(g, '_database', None)
     if db is None:
         db = g._database = sqlite3.connect(DATABASE)
@@ -23,6 +37,7 @@ def get_db():
     return db
 
 # Closes the database connection once the page has finished loading
+"""a"""
 @app.teardown_appcontext
 def close_connection(exception):
     db = getattr(g, '_database', None)
@@ -30,6 +45,7 @@ def close_connection(exception):
         db.close()
 
 # A shortcut for running a database search and getting the results back
+"""a"""
 def query_db(query, args=(), one=False):
     cur = get_db().execute(query, args)
     rv = cur.fetchall()
@@ -37,18 +53,20 @@ def query_db(query, args=(), one=False):
     return (rv[0] if rv else None) if one else rv
 
 # Turns a password into a scrambled code so it's never stored as plain text
+"""a"""
 def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
 # Goes through every customer and makes sure their password is scrambled (not plain text)
+"""a"""
 def migrate_passwords():
     db = sqlite3.connect(DATABASE)
     cursor = db.cursor()
-    
+
     # Gets every customer's ID and current password
     cursor.execute("SELECT ID, password FROM CUSTOMER")
     users = cursor.fetchall()
-    
+
     # Checks each customer one at a time
     for user_id, password in users:
         # A scrambled password is always 64 characters long - if it isn't, it's still plain text
@@ -57,18 +75,19 @@ def migrate_passwords():
             hashed = hash_password(password)
             # Saves the scrambled password over the old plain text one
             cursor.execute("UPDATE CUSTOMER SET password = ? WHERE ID = ?", (hashed, user_id))
-            
+
     # Saves all the changes
     db.commit()
     db.close()
 
 
 # Runs automatically before every page, so every page knows if someone is logged in
+"""a"""
 @app.context_processor
 def inject_user_name():
     # Sees if an email is saved for the current visitor
     email = session.get('user')
-    
+
     # If someone is logged in, finds their first name
     if email:
         query = "SELECT firstname FROM CUSTOMER WHERE email = ?"
@@ -77,27 +96,30 @@ def inject_user_name():
         cursor.execute(query, (email,))
         result = cursor.fetchone()
         db.close()
-        
+
         # Gives the page the customer's first name to display
         if result:
             return dict(user_name=result[0])
-            
+
     # If nobody is logged in, gives the page nothing, so it shows "Sign In" instead
     return dict(user_name=None)
 
 
 # --- PAGE LINKS (ROUTES) --- #
 
+"""a"""
 # Home page
 @app.route('/')
 def home():
-    return render_template("index.html") 
+    return render_template("index.html")
 
+"""a"""
 # Offers page
 @app.route('/offers')
 def offers():
     return render_template("offers.html")
 
+"""a"""
 # Works out which sandwich is today's special offer, and its price
 def get_todays_offer():
     # Gets today's day number: Monday is 1, all the way to Sunday which is 7
@@ -116,6 +138,7 @@ def get_todays_offer():
     )
     return offer, today_number
 
+"""a"""
 # Sub of the Day page - shows today's special sandwich
 @app.route('/sotd')
 def sotd():
@@ -127,7 +150,9 @@ def sotd():
 
     return render_template("sotd.html", offer=offer, today_name=today_name)
 
-# Adds today's special sandwich to the cart at its discounted price - the discount only applies here, not on the normal menu
+# Adds today's special sandwich to the cart at its discounted price.
+# The discount only applies here, not on the normal menu.
+"""a"""
 @app.route('/sotd/add-to-cart')
 def add_sotd_to_cart():
     offer, today_number = get_todays_offer()
@@ -163,11 +188,13 @@ def add_sotd_to_cart():
     flash(f'{name} (Sub of the Day) added to your order!')
     return redirect(url_for('sotd'))
 
+"""aa"""
 # History page
 @app.route('/history')
 def history():
     return render_template("history.html")
 
+"""a"""
 # Sign in / Register page
 @app.route('/signin')
 def signin():
@@ -175,32 +202,34 @@ def signin():
 
 # --- SINGLE SANDWICH PAGE --- #
 
+"""a"""
 # Shows the details of one sandwich when it's clicked on
 @app.route('/sandwich/<int:id>')
 def sandwich(id):
     # Looks up the sandwich that matches the clicked ID
     query = "SELECT ID, name, description, image_url, price FROM PRE_SANDWICH WHERE ID = ?"
     sandwich = query_db(query, (id,), one=True)
-    
+
     # Shows an error if that sandwich doesn't exist
     if sandwich is None:
         return "Sandwich not found", 404
-        
+
     # Shows the sandwich's details
     return render_template("sandwich.html", sandwich=sandwich)
 
 # --- MENU PAGE --- #
 
+"""a"""
 # Shows every sandwich on the menu
 @app.route('/menu', methods=['GET'])
 def menu():
     # Checks if someone is logged in
     user = session.get('user')
-    
+
     # Opens the database
     db = sqlite3.connect(DATABASE)
     cursor = db.cursor()
-    
+
     # Gets every sandwich's details
     query = "SELECT ID, name, description, image_url, price FROM PRE_SANDWICH"
     cursor.execute(query)
@@ -212,30 +241,39 @@ def menu():
     custom_starting_price = cheapest_bread + cheapest_cheese
 
     db.close()
-        
+
     # Shows the menu page with all the sandwiches
     return render_template(
-        'menu.html', 
-        all_sandwiches=all_sandwiches, 
+        'menu.html',
+        all_sandwiches=all_sandwiches,
         user=user,
         custom_starting_price=custom_starting_price
     )
 
 # --- BUILD YOUR OWN SANDWICH --- #
 
+"""a"""
 # Adds up the price of whatever the customer has picked so far
 def calculate_custom_sandwich_price(selection):
     total = 0.0
 
     # Adds the bread's price, if one has been picked
     if selection.get('bread'):
-        bread_row = query_db("SELECT price FROM BREAD WHERE ID = ?", (selection['bread'],), one=True)
+        bread_row = query_db(
+            "SELECT price FROM BREAD WHERE ID = ?",
+            (selection['bread'],),
+            one=True
+        )
         if bread_row:
             total += bread_row[0]
 
     # Adds the cheese's price, if one has been picked
     if selection.get('cheese'):
-        cheese_row = query_db("SELECT price FROM CHEESE WHERE ID = ?", (selection['cheese'],), one=True)
+        cheese_row = query_db(
+            "SELECT price FROM CHEESE WHERE ID = ?",
+            (selection['cheese'],),
+            one=True
+        )
         if cheese_row:
             total += cheese_row[0]
 
@@ -253,6 +291,7 @@ def calculate_custom_sandwich_price(selection):
 
     return total
 
+"""a"""
 # The "Build Your Own Sandwich" page
 @app.route('/custom-sandwich')
 def custom_sandwich():
@@ -263,14 +302,18 @@ def custom_sandwich():
     sauces = query_db("SELECT ID, name, price FROM SAUCE")
     toppings = query_db("SELECT ID, name, price FROM TOPPINGS")
 
-    # Simple lookup lists, matching each option's ID to its price, for the price calculator on the page
+    # Simple lookup lists matching each option's ID to its price.
+    # This helps the price calculator on the page.
     bread_prices = {row[0]: row[3] for row in breads}
     cheese_prices = {row[0]: row[3] for row in cheeses}
     sauce_prices = {row[0]: row[2] for row in sauces}
     topping_prices = {row[0]: row[2] for row in toppings}
 
     # Remembers whatever the customer has already picked this visit
-    selection = session.get('custom_sandwich', {'bread': None, 'cheese': None, 'sauces': [], 'toppings': []})
+    selection = session.get(
+        'custom_sandwich',
+        {'bread': None, 'cheese': None, 'sauces': [], 'toppings': []}
+    )
     total_price = calculate_custom_sandwich_price(selection)
 
     return render_template(
@@ -290,6 +333,7 @@ def custom_sandwich():
         total_price=total_price
     )
 
+"""a"""
 # Remembers the customer's choices as they build their sandwich
 @app.post('/custom-sandwich/update')
 def update_custom_sandwich():
@@ -298,7 +342,8 @@ def update_custom_sandwich():
     sauce_ids = request.form.getlist('sauces', type=int)
     topping_ids = request.form.getlist('toppings', type=int)
 
-    # Saves what's picked so far - nothing is stored permanently until the sandwich is added to the cart
+    # Saves what's picked so far. Nothing is stored permanently until
+    # the sandwich is added to the cart.
     session['custom_sandwich'] = {
         'bread': bread_id,
         'cheese': cheese_id,
@@ -309,6 +354,7 @@ def update_custom_sandwich():
     # Lets the page update instantly without reloading
     return {'status': 'saved'}
 
+"""a"""
 # Clears the sandwich being built and sends the customer back to the menu
 @app.post('/custom-sandwich/cancel')
 def cancel_custom_sandwich():
@@ -317,6 +363,7 @@ def cancel_custom_sandwich():
 
 # --- SAVING THE SHOPPING CART --- #
 
+"""a"""
 # Keeps saving the sandwich being built in the background, so nothing is lost
 @app.post('/custom-sandwich/save-progress')
 def save_custom_progress():
@@ -334,14 +381,14 @@ def save_custom_progress():
     }
     return {'status': 'saved'}
 
-
+"""a"""
 # Adds a ready-made sandwich to the cart, or adds one more if it's already in there
 @app.route('/add-premade-to-session/<int:item_id>')
 def add_premade_to_session(item_id):
     # Starts an empty cart if the customer doesn't have one yet
     if 'premade_cart' not in session:
         session['premade_cart'] = {}
-        
+
     item_id_str = str(item_id)
     # Finds the sandwich's name, so it can be shown in the confirmation message
     sandwich = query_db("SELECT name FROM PRE_SANDWICH WHERE ID = ?", (item_id,), one=True)
@@ -359,12 +406,12 @@ def add_premade_to_session(item_id):
     # Adds one more to the cart
     cart[item_id_str] = current_qty + 1
     session['premade_cart'] = cart
-    
+
     # Shows a confirmation message and sends the customer back to the page they came from
     flash(f'{sandwich[0]} added to your order!')
     return redirect(request.referrer or '/menu')
 
-
+"""a"""
 # Adds the sandwich just built to the cart - combines it with a matching one already there
 @app.post('/add-custom-to-session')
 def add_custom_to_session():
@@ -382,7 +429,8 @@ def add_custom_to_session():
     if 'custom_cart' not in session:
         session['custom_cart'] = []
 
-    # Sorts the sauces/toppings so two sandwiches with the same ingredients always match up, no matter the order they were picked in
+    # Sorts the sauces/toppings so two sandwiches with the same ingredients
+    # always match up, no matter the order they were picked in.
     new_sub_blueprint = {
         'bread': bread_id,
         'cheese': cheese_id,
@@ -391,7 +439,7 @@ def add_custom_to_session():
     }
 
     cart = session['custom_cart']
-    
+
     # Checks if this exact sandwich is already in the cart
     match_found = False
     for item in cart:
@@ -417,7 +465,9 @@ def add_custom_to_session():
 
 # --- CHECKOUT PAGE --- #
 
-# Builds the full shopping cart list (ready-made, Sub of the Day, and custom sandwiches), ready to show on the checkout page
+# Builds the full shopping cart list (ready-made, Sub of the Day,
+# and custom sandwiches), ready to show on the checkout page.
+"""a"""
 @app.route('/checkout')
 def checkout():
     checkout_items = []
@@ -427,7 +477,11 @@ def checkout():
     premade_cart = session.get('premade_cart', {})
     for item_id_str, quantity in premade_cart.items():
         # Gets the sandwich's name, ingredients, and price
-        sandwich = query_db("SELECT name, ingredients, price FROM PRE_SANDWICH WHERE ID = ?", (int(item_id_str),), one=True)
+        sandwich = query_db(
+            "SELECT name, ingredients, price FROM PRE_SANDWICH WHERE ID = ?",
+            (int(item_id_str),),
+            one=True
+        )
         if sandwich:
             name, ingredients, price = sandwich
             subtotal = price * quantity
@@ -449,7 +503,11 @@ def checkout():
         quantity = data['quantity']
         unit_price = data['unit_price']
 
-        sandwich = query_db("SELECT name, ingredients, price FROM PRE_SANDWICH WHERE ID = ?", (int(item_id_str),), one=True)
+        sandwich = query_db(
+            "SELECT name, ingredients, price FROM PRE_SANDWICH WHERE ID = ?",
+            (int(item_id_str),),
+            one=True
+        )
         if sandwich:
             name, ingredients, normal_price = sandwich
             subtotal = unit_price * quantity
@@ -475,7 +533,8 @@ def checkout():
         subtotal = single_unit_price * qty
         grand_total += subtotal
 
-        # Finds the names of the bread, cheese, sauces, and toppings, to show a simple ingredients list
+        # Finds the names of the bread, cheese, sauces, and toppings,
+        # to show a simple ingredients list.
         bread_row = query_db("SELECT name FROM BREAD WHERE ID = ?", (custom['bread'],), one=True)
         cheese_row = query_db("SELECT name FROM CHEESE WHERE ID = ?", (custom['cheese'],), one=True)
 
@@ -487,7 +546,11 @@ def checkout():
 
         topping_names = []
         for topping_id in custom.get('toppings', []):
-            topping_row = query_db("SELECT name FROM TOPPINGS WHERE ID = ?", (topping_id,), one=True)
+            topping_row = query_db(
+                "SELECT name FROM TOPPINGS WHERE ID = ?",
+                (topping_id,),
+                one=True
+            )
             if topping_row:
                 topping_names.append(topping_row[0])
 
@@ -515,12 +578,15 @@ def checkout():
     # Gets every store, to fill the pickup-location dropdown
     all_stores = query_db("SELECT ID, name FROM STORES")
 
-    # The first time the checkout page is opened, picks the customer's saved favourite store automatically
+    # The first time the checkout page is opened, picks the customer's
+    # saved favourite store automatically.
     if 'selected_store_id' not in session:
         email = session.get('user')
         if email:
             pref_row = query_db(
-                "SELECT STORES.ID FROM CUSTOMER LEFT JOIN STORES ON CUSTOMER.pref_store = STORES.ID WHERE CUSTOMER.email = ?",
+                "SELECT STORES.ID FROM CUSTOMER "
+                "LEFT JOIN STORES ON CUSTOMER.pref_store = STORES.ID "
+                "WHERE CUSTOMER.email = ?",
                 (email,), one=True
             )
             if pref_row and pref_row[0]:
@@ -540,14 +606,16 @@ def checkout():
     for item_id_str in premade_cart.keys():
         cart_ids_in_use.add(int(item_id_str))
 
-    # Picks a few sandwiches the customer hasn't already added, for the "Hungry for more?" suggestions
+    # Picks a few sandwiches the customer hasn't already added, for the
+    # "Hungry for more?" suggestions.
     all_premade = query_db("SELECT ID, name, ingredients, price FROM PRE_SANDWICH")
     hungry_for_more = []
     for s in all_premade:
         # Skips anything already in the cart
         if s[0] in cart_ids_in_use:
             continue
-        # This particular sandwich is never suggested here, it's too much to add alongside other items
+        # This particular sandwich is never suggested here; it's too much to
+        # add alongside other items.
         if s[1] == 'Megatronus Heart Disease':
             continue
         hungry_for_more.append(s)
@@ -566,10 +634,14 @@ def checkout():
     )
 
 # Saves which store the customer picked for collecting their order
+"""a"""
 @app.post('/checkout/set-store')
 def set_checkout_store():
     store_id = request.form.get('store_id', type=int)
-    store_row = query_db("SELECT ID FROM STORES WHERE ID = ?", (store_id,), one=True) if store_id else None
+    store_row = (
+        query_db("SELECT ID FROM STORES WHERE ID = ?", (store_id,), one=True)
+        if store_id else None
+    )
     if store_row:
         session['selected_store_id'] = store_row[0]
     else:
@@ -578,6 +650,7 @@ def set_checkout_store():
     return redirect(url_for('checkout'))
 
 # Saves the pickup time the customer picked, only if it's at least 10 minutes from now
+"""a"""
 @app.post('/checkout/set-time')
 def set_checkout_time():
     time_str = request.form.get('pickup_time')
@@ -602,12 +675,13 @@ def set_checkout_time():
 # --- LOGGING IN --- #
 
 # Checks the customer's email and password when they click "Login"
+"""a"""
 @app.post('/get_login_data')
 def handle_login_data():
     # Reads what was typed into the login form
     email = str(request.form['email'])
     password = str(request.form['password'])
-    
+
     # Checks if the email and password are correct
     verify = verification(email, password)
     if verify:
@@ -616,14 +690,20 @@ def handle_login_data():
         return redirect('/')
     else:
         # Reloads the login page with a red error message
-        return render_template('signin.html', warning=True, register_warning=None, show_register=False)
+        return render_template(
+            'signin.html',
+            warning=True,
+            register_warning=None,
+            show_register=False
+        )
 
 # Compares a typed-in password against the saved one
+"""a"""
 def verification(email, password):
     # Finds the saved password for this email
     query = "SELECT password FROM CUSTOMER WHERE email = ?"
     actual_password = query_db(query, (email,), one=True)
-    
+
     # Checks if they match
     if actual_password:
         return hash_password(password) == actual_password[0]
@@ -631,18 +711,21 @@ def verification(email, password):
 
 # --- CREATING A NEW ACCOUNT --- #
 
+"""a"""
 # Finds a store's ID number from its name
 def get_store_id(store_name):
     query = "SELECT ID FROM STORES WHERE name = ?"
     result = query_db(query, (store_name,), one=True)
     return result[0] if result else None
 
+"""a"""
 # Finds a gender's ID number from its name
 def get_gender_id(gender_name):
     query = "SELECT ID FROM GENDER WHERE name = ?"
     result = query_db(query, (gender_name,), one=True)
     return result[0] if result else None
 
+"""a"""
 # Creates a new customer account from the registration form
 @app.post('/handle_register_data')
 def handle_register_data():
@@ -658,22 +741,42 @@ def handle_register_data():
 
     # Both passwords must match
     if password != confirm_password:
-        return render_template('signin.html', warning=None, register_warning="Passwords do not match.", show_register=True)
+        return render_template(
+            'signin.html',
+            warning=None,
+            register_warning="Passwords do not match.",
+            show_register=True
+        )
 
     # Checks this email hasn't been used already
     existing = query_db("SELECT ID FROM CUSTOMER WHERE email = ?", (email,), one=True)
     if existing:
-        return render_template('signin.html', warning=None, register_warning="An account with that email already exists.", show_register=True)
+        return render_template(
+            'signin.html',
+            warning=None,
+            register_warning="An account with that email already exists.",
+            show_register=True
+        )
 
     # Turns the chosen store's name into its ID number
     store_id = get_store_id(prefstore_name)
     if store_id is None:
-        return render_template('signin.html', warning=None, register_warning="Please select a valid store.", show_register=True)
+        return render_template(
+            'signin.html',
+            warning=None,
+            register_warning="Please select a valid store.",
+            show_register=True
+        )
 
     # Turns the chosen gender's name into its ID number
     gender_id = get_gender_id(gender_name)
     if gender_id is None:
-        return render_template('signin.html', warning=None, register_warning="Please select a valid gender.", show_register=True)
+        return render_template(
+            'signin.html',
+            warning=None,
+            register_warning="Please select a valid gender.",
+            show_register=True
+        )
 
     # Scrambles the password before saving it
     hashed = hash_password(password)
@@ -681,7 +784,8 @@ def handle_register_data():
     # Saves the new customer in the database
     db = get_db()
     db.execute(
-        "INSERT INTO CUSTOMER (firstname, lastname, email, ph_number, password, pref_store, gender) "
+        "INSERT INTO CUSTOMER "
+        "(firstname, lastname, email, ph_number, password, pref_store, gender) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         (firstname, lastname, email, phonenumber, hashed, store_id, gender_id)
     )
@@ -691,6 +795,7 @@ def handle_register_data():
     session['user'] = email
     return redirect('/')
 
+"""a"""
 # The account details page - only visible if someone is logged in
 @app.route('/account')
 def account_details():
@@ -709,6 +814,7 @@ def account_details():
     customer_info = query_db(query, (email,), one=True)
     return render_template("account.html", customer=customer_info)
 
+"""a"""
 # Turns a 24-hour time like "14:35" into a 12-hour time like "2:35pm"
 def format_pickup_time(pickup_time):
     if not pickup_time:
@@ -719,6 +825,7 @@ def format_pickup_time(pickup_time):
         # If something odd was saved, just show it as-is rather than break the page
         return pickup_time
 
+"""a"""
 # Finds the customer's most recent order
 def get_last_order(email):
     return query_db(
@@ -734,6 +841,7 @@ def get_last_order(email):
         (email,), one=True
     )
 
+"""a"""
 # Shows the thank you page again for the customer's last order, linked from their account page
 @app.route('/account/last-order')
 def last_order():
@@ -758,12 +866,14 @@ def last_order():
         total_amount=total_amount
     )
 
+"""a"""
 # Logs the customer out and sends them to the home page
 @app.route('/logout')
 def logout():
     session.pop('user', None)
     return redirect('/')
 
+"""a"""
 # Shows a friendly error page if someone visits a page that doesn't exist
 @app.errorhandler(404)
 def page_not_found(e):
@@ -771,6 +881,7 @@ def page_not_found(e):
 
 # --- CHANGING WHAT'S IN THE CART --- #
 
+"""a"""
 # Changes how many of a ready-made sandwich are in the cart, or removes it if set to 0
 @app.post('/cart/update-quantity/<string:item_id>')
 def update_cart_quantity(item_id):
@@ -789,9 +900,10 @@ def update_cart_quantity(item_id):
         else:
             cart.pop(item_id, None)
         session['premade_cart'] = cart
-        
+
     return redirect(url_for('checkout'))
 
+"""a"""
 # Changes how many of a Sub of the Day sandwich are in the cart, keeping its discounted price
 @app.post('/cart/update-sotd-quantity/<string:item_id>')
 def update_sotd_quantity(item_id):
@@ -814,6 +926,7 @@ def update_sotd_quantity(item_id):
 
     return redirect(url_for('checkout'))
 
+"""a"""
 # Changes how many of a custom sandwich are in the cart, or removes it if set to 0
 @app.post('/cart/update-custom-quantity/<int:index>')
 def update_custom_quantity(index):
@@ -834,9 +947,10 @@ def update_custom_quantity(index):
             else:
                 cart.pop(index)
             session['custom_cart'] = cart
-            
+
     return redirect(url_for('checkout'))
 
+"""a"""
 # Removes a ready-made sandwich from the cart
 @app.route('/cart/delete-premade/<string:item_id>')
 def delete_premade_item(item_id):
@@ -845,9 +959,10 @@ def delete_premade_item(item_id):
         cart.pop(item_id, None)
         session['premade_cart'] = cart
         flash("Pre-made sub removed.")
-        
+
     return redirect(url_for('checkout'))
 
+"""a"""
 # Removes a Sub of the Day sandwich from the cart
 @app.route('/cart/delete-sotd/<string:item_id>')
 def delete_sotd_item(item_id):
@@ -859,6 +974,7 @@ def delete_sotd_item(item_id):
 
     return redirect(url_for('checkout'))
 
+"""a"""
 # Removes a custom sandwich from the cart
 @app.route('/cart/delete-custom/<int:index>')
 def delete_custom_item(index):
@@ -870,11 +986,12 @@ def delete_custom_item(index):
             cart.pop(idx)
             session['custom_cart'] = cart
             flash("Custom sub removed.")
-            
+
     return redirect(url_for('checkout'))
 
 # --- PLACING THE ORDER --- #
 
+"""a"""
 @app.route('/checkout/thanks')
 def purchase_thanks():
     # The customer must be logged in to place an order
@@ -889,7 +1006,7 @@ def purchase_thanks():
 
     # The pickup time the customer chose, e.g. "14:35"
     pickup_time = session.get('pickup_time_value')
-    
+
     # The pickup store the customer selected
     pickup_store = session.get('selected_store_id')
 
@@ -899,7 +1016,7 @@ def purchase_thanks():
         return redirect(url_for('menu'))
 
     db = get_db()
-   
+
     try:
         # Finds the customer's ID from their email
         customer_row = query_db("SELECT ID FROM CUSTOMER WHERE email = ?", (email,), one=True)
@@ -910,9 +1027,13 @@ def purchase_thanks():
 
         # Works out the full price of the order
         grand_total = 0.0
-       
+
         for item_id_str, quantity in premade_cart.items():
-            price_row = query_db("SELECT price FROM PRE_SANDWICH WHERE ID = ?", (int(item_id_str),), one=True)
+            price_row = query_db(
+                "SELECT price FROM PRE_SANDWICH WHERE ID = ?",
+                (int(item_id_str),),
+                one=True
+            )
             if price_row:
                 grand_total += price_row[0] * quantity
 
@@ -957,7 +1078,8 @@ def purchase_thanks():
                 actual_price = price_row[0]
                 db.execute(
                     """
-                    INSERT INTO ORDER_ITEMS (order_ID, pre_sandwich_ID, cus_sandwich_ID, quantity, final_price)
+                    INSERT INTO ORDER_ITEMS
+                    (order_ID, pre_sandwich_ID, cus_sandwich_ID, quantity, final_price)
                     VALUES (?, ?, NULL, ?, ?)
                     """,
                     (new_order_id, pre_id, quantity, round(actual_price * quantity, 2))
@@ -970,7 +1092,8 @@ def purchase_thanks():
             unit_price = data['unit_price']
             db.execute(
                 """
-                INSERT INTO ORDER_ITEMS (order_ID, pre_sandwich_ID, cus_sandwich_ID, quantity, final_price)
+                INSERT INTO ORDER_ITEMS
+                (order_ID, pre_sandwich_ID, cus_sandwich_ID, quantity, final_price)
                 VALUES (?, ?, NULL, ?, ?)
                 """,
                 (new_order_id, pre_id, quantity, round(unit_price * quantity, 2))
@@ -981,21 +1104,21 @@ def purchase_thanks():
             qty = custom.get('quantity', 1)
             single_unit_price = calculate_custom_sandwich_price(custom)
             total_custom_price = round(single_unit_price * qty, 2)
-           
+
             # Saves the sandwich's bread and cheese combination
             cus_cursor = db.execute(
                 "INSERT INTO CUS_SANDWICH (bread_ID, cheese_ID) VALUES (?, ?)",
                 (custom['bread'], custom['cheese'])
             )
             new_custom_sandwich_id = cus_cursor.lastrowid
-           
+
             # Saves each sauce that was picked
             for sauce_id in custom.get('sauces', []):
                 db.execute(
                     "INSERT INTO CUS_SANDWICH_SAUCES (cus_sandwich_ID, sauce_ID) VALUES (?, ?)",
                     (new_custom_sandwich_id, sauce_id)
                 )
-               
+
             # Saves each topping that was picked
             for topping_id in custom.get('toppings', []):
                 db.execute(
@@ -1006,7 +1129,8 @@ def purchase_thanks():
             # Saves this custom sandwich as part of the order
             db.execute(
                 """
-                INSERT INTO ORDER_ITEMS (order_ID, pre_sandwich_ID, cus_sandwich_ID, quantity, final_price)
+                INSERT INTO ORDER_ITEMS
+                (order_ID, pre_sandwich_ID, cus_sandwich_ID, quantity, final_price)
                 VALUES (?, NULL, ?, ?, ?)
                 """,
                 (new_order_id, new_custom_sandwich_id, qty, total_custom_price)
@@ -1026,7 +1150,9 @@ def purchase_thanks():
 
         # Finds the customer's favourite store, since that's where they're picking up from
         store_row = query_db(
-            "SELECT STORES.name FROM ORDERS LEFT JOIN STORES ON ORDERS.pickup_store = STORES.ID WHERE ORDERS.ID = ?",
+            "SELECT STORES.name FROM ORDERS "
+            "LEFT JOIN STORES ON ORDERS.pickup_store = STORES.ID "
+            "WHERE ORDERS.ID = ?",
             (new_order_id,),
             one=True
         )

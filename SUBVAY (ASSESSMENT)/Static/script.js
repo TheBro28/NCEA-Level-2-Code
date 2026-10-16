@@ -2,7 +2,7 @@
 function showForm(formId) {
     // Hides whichever box is currently showing
     document.querySelectorAll(".form-box").forEach(form => form.classList.remove("active"));
-    
+
     // Shows the one that was clicked on
     document.getElementById(formId).classList.add("active");
 }
