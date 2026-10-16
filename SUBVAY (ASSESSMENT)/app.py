@@ -4,15 +4,20 @@ It handles all the pages, forms, and database queries.
 """
 
 # Import the tools needed to build the website and handle data
-from flask import (
-    Flask, g, render_template, request, redirect,
-    session, url_for, Blueprint, flash
-)
-import sqlite3, hashlib, os
+import hashlib
+import hmac
+import os
+import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
-# The name of the database file
-DATABASE = 'subvay.db'
+from flask import Flask, flash, g, redirect, render_template, request, session, url_for
+from werkzeug.security import check_password_hash, generate_password_hash
+
+DATABASE = os.environ.get(
+    "SUBVAY_DATABASE",
+    str(Path(__file__).resolve().parent.parent / "subvay.db")
+)
 
 # Creates the website application
 app = Flask(__name__, static_folder='Static')
@@ -24,105 +29,101 @@ if not SECRET_KEY:
         "My secret key is not set. Please set the MY_SECRET_KEY "
         "environment variable."
     )
-print(f"Successfully loaded key: {SECRET_KEY[:3]}...")
+app.config.update(
+    SECRET_KEY=SECRET_KEY,
+    DATABASE=DATABASE,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax"
+)
 
 # Opens a connection to the database, reusing the same one for this page load
-"""a"""
-def get_db():   
+def get_db():
+    """Gets the SQLite connection for this request"""
     db = getattr(g, '_database', None)
     if db is None:
-        db = g._database = sqlite3.connect(DATABASE)
+        db = g._database = sqlite3.connect(app.config['DATABASE'])
         # Enforce declared foreign-key relationships (SQLite disables these by default).
         db.execute("PRAGMA foreign_keys = ON")
     return db
 
 # Closes the database connection once the page has finished loading
-"""a"""
 @app.teardown_appcontext
-def close_connection(exception):
+def close_connection(_exception):
+    """Close the database connection when the request is finished"""
     db = getattr(g, '_database', None)
     if db is not None:
         db.close()
 
 # A shortcut for running a database search and getting the results back
-"""a"""
 def query_db(query, args=(), one=False):
+    """Run a query and return all its rows, or just the first one"""
     cur = get_db().execute(query, args)
     rv = cur.fetchall()
     cur.close()
     return (rv[0] if rv else None) if one else rv
 
 # Turns a password into a scrambled code so it's never stored as plain text
-"""a"""
 def hash_password(password):
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+    """Hash a password before storing it"""
+    return generate_password_hash(password)
 
-# Goes through every customer and makes sure their password is scrambled (not plain text)
-"""a"""
+# Upgrades plaintext legacy (already in database) passwords. SHA-256 hashes are upgraded at login,
+# where the original password is available for secure re-hashing.
 def migrate_passwords():
-    db = sqlite3.connect(DATABASE)
-    cursor = db.cursor()
-
-    # Gets every customer's ID and current password
-    cursor.execute("SELECT ID, password FROM CUSTOMER")
-    users = cursor.fetchall()
-
-    # Checks each customer one at a time
-    for user_id, password in users:
-        # A scrambled password is always 64 characters long - if it isn't, it's still plain text
-        if len(password) != 64:
-            # Scrambles the plain text password
-            hashed = hash_password(password)
-            # Saves the scrambled password over the old plain text one
-            cursor.execute("UPDATE CUSTOMER SET password = ? WHERE ID = ?", (hashed, user_id))
-
-    # Saves all the changes
-    db.commit()
-    db.close()
+    """Update any old plaintext passwords in the customer table"""
+    db = sqlite3.connect(app.config['DATABASE'])
+    try:
+        with db:
+            users = db.execute("SELECT ID, password FROM CUSTOMER").fetchall()
+            for user_id, password in users:
+                has_adaptive_hash = password and password.startswith(("scrypt:", "pbkdf2:"))
+                if password and not has_adaptive_hash and len(password) != 64:
+                    db.execute(
+                        "UPDATE CUSTOMER SET password = ? WHERE ID = ?",
+                        (hash_password(password), user_id)
+                    )
+    finally:
+        db.close()
 
 
 # Runs automatically before every page, so every page knows if someone is logged in
-"""a"""
 @app.context_processor
 def inject_user_name():
     # Sees if an email is saved for the current visitor
+    """Make the signed-in customer's name available to templates"""
     email = session.get('user')
 
     # If someone is logged in, finds their first name
     if email:
-        query = "SELECT firstname FROM CUSTOMER WHERE email = ?"
-        db = sqlite3.connect(DATABASE)
-        cursor = db.cursor()
-        cursor.execute(query, (email,))
-        result = cursor.fetchone()
-        db.close()
+        result = query_db(
+            "SELECT firstname FROM CUSTOMER WHERE email = ?",
+            (email,),
+            one=True
+        )
 
         # Gives the page the customer's first name to display
         if result:
-            return dict(user_name=result[0])
+            return {"user_name": result[0]}
 
     # If nobody is logged in, gives the page nothing, so it shows "Sign In" instead
-    return dict(user_name=None)
+    return {"user_name": None}
 
 
 # --- PAGE LINKS (ROUTES) --- #
-
-"""a"""
 # Home page
 @app.route('/')
 def home():
+    """Show the home page"""
     return render_template("index.html")
-
-"""a"""
 # Offers page
 @app.route('/offers')
 def offers():
+    """Show the current offers"""
     return render_template("offers.html")
-
-"""a"""
 # Works out which sandwich is today's special offer, and its price
 def get_todays_offer():
     # Gets today's day number: Monday is 1, all the way to Sunday which is 7
+    """Find today's offer and the matching weekday number"""
     today_number = datetime.now().isoweekday()
 
     # Finds the sandwich linked to today's offer, with its name, ingredients, image, and both prices
@@ -137,11 +138,10 @@ def get_todays_offer():
         (today_number,), one=True
     )
     return offer, today_number
-
-"""a"""
 # Sub of the Day page - shows today's special sandwich
 @app.route('/sotd')
 def sotd():
+    """Show the Sub of the Day deal"""
     offer, today_number = get_todays_offer()
 
     # Turns today's day number into its name, e.g. 1 becomes "Monday"
@@ -152,17 +152,17 @@ def sotd():
 
 # Adds today's special sandwich to the cart at its discounted price.
 # The discount only applies here, not on the normal menu.
-"""a"""
 @app.route('/sotd/add-to-cart')
 def add_sotd_to_cart():
-    offer, today_number = get_todays_offer()
+    """Add today's discounted sandwich to the cart"""
+    offer, _ = get_todays_offer()
 
     # Stops here if there's no offer set up for today
     if not offer:
         flash("No offer is available today.")
         return redirect(url_for('sotd'))
 
-    sandwich_id, name, ingredients, image_url, normal_price, discount_amount = offer
+    sandwich_id, name, _, _, normal_price, discount_amount = offer
     # The discount is an amount taken OFF the normal price, not the final price itself
     sale_price = normal_price - discount_amount
     item_id_str = str(sandwich_id)
@@ -187,26 +187,23 @@ def add_sotd_to_cart():
 
     flash(f'{name} (Sub of the Day) added to your order!')
     return redirect(url_for('sotd'))
-
-"""aa"""
 # History page
 @app.route('/history')
 def history():
+    """Show the story behind Subvay"""
     return render_template("history.html")
-
-"""a"""
 # Sign in / Register page
 @app.route('/signin')
 def signin():
+    """Show the login and sign-up forms"""
     return render_template("signin.html", warning=None, register_warning=None, show_register=False)
 
 # --- SINGLE SANDWICH PAGE --- #
-
-"""a"""
 # Shows the details of one sandwich when it's clicked on
 @app.route('/sandwich/<int:id>')
 def sandwich(id):
     # Looks up the sandwich that matches the clicked ID
+    """Show the details for a pre-made sandwich"""
     query = "SELECT ID, name, description, image_url, price FROM PRE_SANDWICH WHERE ID = ?"
     sandwich = query_db(query, (id,), one=True)
 
@@ -218,12 +215,11 @@ def sandwich(id):
     return render_template("sandwich.html", sandwich=sandwich)
 
 # --- MENU PAGE --- #
-
-"""a"""
 # Shows every sandwich on the menu
 @app.route('/menu', methods=['GET'])
 def menu():
     # Checks if someone is logged in
+    """Show the menu and the starting price for a custom sandwich"""
     user = session.get('user')
 
     # Opens the database
@@ -251,10 +247,9 @@ def menu():
     )
 
 # --- BUILD YOUR OWN SANDWICH --- #
-
-"""a"""
 # Adds up the price of whatever the customer has picked so far
 def calculate_custom_sandwich_price(selection):
+    """Add up the cost of the chosen sandwich ingredients"""
     total = 0.0
 
     # Adds the bread's price, if one has been picked
@@ -290,12 +285,11 @@ def calculate_custom_sandwich_price(selection):
             total += topping_row[0]
 
     return total
-
-"""a"""
 # The "Build Your Own Sandwich" page
 @app.route('/custom-sandwich')
 def custom_sandwich():
     # Gets every bread and cheese option, with their descriptions
+    """Show the custom sandwich builder and current selections"""
     breads = query_db("SELECT ID, name, description, price FROM BREAD")
     cheeses = query_db("SELECT ID, name, description, price FROM CHEESE")
     # Gets every sauce and topping option
@@ -332,11 +326,10 @@ def custom_sandwich():
         selected_toppings=selection.get('toppings', []),
         total_price=total_price
     )
-
-"""a"""
 # Remembers the customer's choices as they build their sandwich
 @app.post('/custom-sandwich/update')
 def update_custom_sandwich():
+    """Keep the current sandwich choices in the session"""
     bread_id = request.form.get('bread', type=int)
     cheese_id = request.form.get('cheese', type=int)
     sauce_ids = request.form.getlist('sauces', type=int)
@@ -353,20 +346,18 @@ def update_custom_sandwich():
 
     # Lets the page update instantly without reloading
     return {'status': 'saved'}
-
-"""a"""
 # Clears the sandwich being built and sends the customer back to the menu
 @app.post('/custom-sandwich/cancel')
 def cancel_custom_sandwich():
+    """Clear the sandwich choices and go back to the menu"""
     session.pop('custom_sandwich', None)
     return redirect(url_for('menu'))
 
 # --- SAVING THE SHOPPING CART --- #
-
-"""a"""
 # Keeps saving the sandwich being built in the background, so nothing is lost
 @app.post('/custom-sandwich/save-progress')
 def save_custom_progress():
+    """Save the sandwich choices so they aren't lost"""
     bread_id = request.form.get('bread', type=int)
     cheese_id = request.form.get('cheese', type=int)
     sauce_ids = request.form.getlist('sauces', type=int)
@@ -380,12 +371,11 @@ def save_custom_progress():
         'toppings': topping_ids
     }
     return {'status': 'saved'}
-
-"""a"""
 # Adds a ready-made sandwich to the cart, or adds one more if it's already in there
 @app.route('/add-premade-to-session/<int:item_id>')
 def add_premade_to_session(item_id):
     # Starts an empty cart if the customer doesn't have one yet
+    """Add a pre-made sandwich to the cart"""
     if 'premade_cart' not in session:
         session['premade_cart'] = {}
 
@@ -410,11 +400,10 @@ def add_premade_to_session(item_id):
     # Shows a confirmation message and sends the customer back to the page they came from
     flash(f'{sandwich[0]} added to your order!')
     return redirect(request.referrer or '/menu')
-
-"""a"""
 # Adds the sandwich just built to the cart - combines it with a matching one already there
 @app.post('/add-custom-to-session')
 def add_custom_to_session():
+    """Add the chosen custom sandwich to the cart"""
     bread_id = request.form.get('bread', type=int)
     cheese_id = request.form.get('cheese', type=int)
     sauce_ids = request.form.getlist('sauces', type=int)
@@ -467,9 +456,9 @@ def add_custom_to_session():
 
 # Builds the full shopping cart list (ready-made, Sub of the Day,
 # and custom sandwiches), ready to show on the checkout page.
-"""a"""
 @app.route('/checkout')
 def checkout():
+    """Show the cart, total, and pickup options"""
     checkout_items = []
     grand_total = 0.0
 
@@ -634,9 +623,9 @@ def checkout():
     )
 
 # Saves which store the customer picked for collecting their order
-"""a"""
 @app.post('/checkout/set-store')
 def set_checkout_store():
+    """Remember which store the customer picked up from"""
     store_id = request.form.get('store_id', type=int)
     store_row = (
         query_db("SELECT ID FROM STORES WHERE ID = ?", (store_id,), one=True)
@@ -650,9 +639,9 @@ def set_checkout_store():
     return redirect(url_for('checkout'))
 
 # Saves the pickup time the customer picked, only if it's at least 10 minutes from now
-"""a"""
 @app.post('/checkout/set-time')
 def set_checkout_time():
+    """Save the pickup time if it's far enough in the future"""
     time_str = request.form.get('pickup_time')
 
     try:
@@ -675,10 +664,10 @@ def set_checkout_time():
 # --- LOGGING IN --- #
 
 # Checks the customer's email and password when they click "Login"
-"""a"""
 @app.post('/get_login_data')
 def handle_login_data():
     # Reads what was typed into the login form
+    """Check the login and sign the customer in"""
     email = str(request.form['email'])
     password = str(request.form['password'])
 
@@ -688,48 +677,61 @@ def handle_login_data():
         # Logs the customer in and sends them to the home page
         session['user'] = email
         return redirect('/')
-    else:
-        # Reloads the login page with a red error message
-        return render_template(
-            'signin.html',
-            warning=True,
-            register_warning=None,
-            show_register=False
-        )
+
+    # Reloads the login page with a red error message
+    return render_template(
+        'signin.html',
+        warning=True,
+        register_warning=None,
+        show_register=False
+    )
 
 # Compares a typed-in password against the saved one
-"""a"""
 def verification(email, password):
-    # Finds the saved password for this email
-    query = "SELECT password FROM CUSTOMER WHERE email = ?"
-    actual_password = query_db(query, (email,), one=True)
+    """Check the password and update an old password hash if needed"""
+    actual_password = query_db(
+        "SELECT password FROM CUSTOMER WHERE email = ?",
+        (email,),
+        one=True
+    )
+    if not actual_password or not actual_password[0]:
+        return False
 
-    # Checks if they match
-    if actual_password:
-        return hash_password(password) == actual_password[0]
-    return False
+    stored_password = actual_password[0]
+    if stored_password.startswith(("scrypt:", "pbkdf2:")):
+        return check_password_hash(stored_password, password)
+
+    legacy_sha256 = hashlib.sha256(password.encode('utf-8')).hexdigest()
+    password_matches = (
+        hmac.compare_digest(stored_password, legacy_sha256)
+        or hmac.compare_digest(stored_password, password)
+    )
+    if password_matches:
+        get_db().execute(
+            "UPDATE CUSTOMER SET password = ? WHERE email = ?",
+            (hash_password(password), email)
+        )
+        get_db().commit()
+    return password_matches
 
 # --- CREATING A NEW ACCOUNT --- #
-
-"""a"""
 # Finds a store's ID number from its name
 def get_store_id(store_name):
+    """Look up a store's ID using its name"""
     query = "SELECT ID FROM STORES WHERE name = ?"
     result = query_db(query, (store_name,), one=True)
     return result[0] if result else None
-
-"""a"""
 # Finds a gender's ID number from its name
 def get_gender_id(gender_name):
+    """Look up a gender's ID using its name"""
     query = "SELECT ID FROM GENDER WHERE name = ?"
     result = query_db(query, (gender_name,), one=True)
     return result[0] if result else None
-
-"""a"""
 # Creates a new customer account from the registration form
 @app.post('/handle_register_data')
 def handle_register_data():
     # Reads everything typed into the registration form
+    """Check the sign-up details and create the new account"""
     firstname = request.form['firstname']
     lastname = request.form['lastname']
     email = request.form['email']
@@ -794,11 +796,10 @@ def handle_register_data():
     # Logs the new customer in straight away and sends them home
     session['user'] = email
     return redirect('/')
-
-"""a"""
 # The account details page - only visible if someone is logged in
 @app.route('/account')
 def account_details():
+    """Show the signed-in customer's account details"""
     if 'user' not in session:
         return redirect('/signin')
     email = session['user']
@@ -813,10 +814,9 @@ def account_details():
     """
     customer_info = query_db(query, (email,), one=True)
     return render_template("account.html", customer=customer_info)
-
-"""a"""
 # Turns a 24-hour time like "14:35" into a 12-hour time like "2:35pm"
 def format_pickup_time(pickup_time):
+    """Turn a 24-hour pickup time into something easier to read"""
     if not pickup_time:
         return None
     try:
@@ -824,10 +824,9 @@ def format_pickup_time(pickup_time):
     except ValueError:
         # If something odd was saved, just show it as-is rather than break the page
         return pickup_time
-
-"""a"""
 # Finds the customer's most recent order
 def get_last_order(email):
+    """Find the customer's latest order"""
     return query_db(
         """
         SELECT ORDERS.ID, ORDERS.total_amount, ORDERS.pickup_time, STORES.name
@@ -840,12 +839,11 @@ def get_last_order(email):
         """,
         (email,), one=True
     )
-
-"""a"""
 # Shows the thank you page again for the customer's last order, linked from their account page
 @app.route('/account/last-order')
 def last_order():
     # Only works if the customer is logged in
+    """Show the signed-in customer's latest order confirmation"""
     if 'user' not in session:
         return redirect('/signin')
 
@@ -865,27 +863,24 @@ def last_order():
         pickup_display=format_pickup_time(pickup_time),
         total_amount=total_amount
     )
-
-"""a"""
 # Logs the customer out and sends them to the home page
 @app.route('/logout')
 def logout():
+    """Sign the customer out"""
     session.pop('user', None)
     return redirect('/')
-
-"""a"""
 # Shows a friendly error page if someone visits a page that doesn't exist
 @app.errorhandler(404)
-def page_not_found(e):
+def page_not_found(_error):
+    """Show the not-found page and return a 404 response"""
     return render_template("404.html"), 404
 
 # --- CHANGING WHAT'S IN THE CART --- #
-
-"""a"""
 # Changes how many of a ready-made sandwich are in the cart, or removes it if set to 0
 @app.post('/cart/update-quantity/<string:item_id>')
 def update_cart_quantity(item_id):
     # Reads the new quantity typed in or set with the +/- buttons
+    """Change the quantity or remove a pre-made sandwich"""
     quantity = request.form.get('quantity', type=int)
 
     # Keeps the number between 1 and 99
@@ -902,12 +897,11 @@ def update_cart_quantity(item_id):
         session['premade_cart'] = cart
 
     return redirect(url_for('checkout'))
-
-"""a"""
 # Changes how many of a Sub of the Day sandwich are in the cart, keeping its discounted price
 @app.post('/cart/update-sotd-quantity/<string:item_id>')
 def update_sotd_quantity(item_id):
     # Reads the new quantity typed in or set with the +/- buttons
+    """Change the quantity or remove a Sub of the Day sandwich"""
     quantity = request.form.get('quantity', type=int)
 
     # Keeps the number between 1 and 99
@@ -925,12 +919,11 @@ def update_sotd_quantity(item_id):
             session['sotd_cart'] = cart
 
     return redirect(url_for('checkout'))
-
-"""a"""
 # Changes how many of a custom sandwich are in the cart, or removes it if set to 0
 @app.post('/cart/update-custom-quantity/<int:index>')
 def update_custom_quantity(index):
     # Reads the new quantity typed in or set with the +/- buttons
+    """Change the quantity or remove a custom sandwich"""
     quantity = request.form.get('quantity', type=int)
 
     # Keeps the number between 1 and 99
@@ -949,11 +942,10 @@ def update_custom_quantity(index):
             session['custom_cart'] = cart
 
     return redirect(url_for('checkout'))
-
-"""a"""
 # Removes a ready-made sandwich from the cart
 @app.route('/cart/delete-premade/<string:item_id>')
 def delete_premade_item(item_id):
+    """Take a pre-made sandwich out of the cart"""
     if 'premade_cart' in session:
         cart = session['premade_cart']
         cart.pop(item_id, None)
@@ -961,11 +953,10 @@ def delete_premade_item(item_id):
         flash("Pre-made sub removed.")
 
     return redirect(url_for('checkout'))
-
-"""a"""
 # Removes a Sub of the Day sandwich from the cart
 @app.route('/cart/delete-sotd/<string:item_id>')
 def delete_sotd_item(item_id):
+    """Take the Sub of the Day sandwich out of the cart"""
     if 'sotd_cart' in session:
         cart = session['sotd_cart']
         cart.pop(item_id, None)
@@ -973,11 +964,10 @@ def delete_sotd_item(item_id):
         flash("Sub of the Day item removed.")
 
     return redirect(url_for('checkout'))
-
-"""a"""
 # Removes a custom sandwich from the cart
 @app.route('/cart/delete-custom/<int:index>')
 def delete_custom_item(index):
+    """Take a custom sandwich out of the cart"""
     if 'custom_cart' in session:
         cart = session['custom_cart']
         # Stops the website crashing if this item doesn't exist anymore
@@ -990,11 +980,10 @@ def delete_custom_item(index):
     return redirect(url_for('checkout'))
 
 # --- PLACING THE ORDER --- #
-
-"""a"""
-@app.route('/checkout/thanks')
+@app.post('/checkout/thanks')
 def purchase_thanks():
     # The customer must be logged in to place an order
+    """Check out the order, save it, and show a confirmation"""
     email = session.get('user')
     if not email:
         flash("You must be logged in to complete a purchase!")
@@ -1006,6 +995,11 @@ def purchase_thanks():
 
     # The pickup time the customer chose, e.g. "14:35"
     pickup_time = session.get('pickup_time_value')
+    try:
+        datetime.strptime(pickup_time, '%H:%M')
+    except (TypeError, ValueError):
+        flash("Please choose a valid pickup time.")
+        return redirect(url_for('checkout'))
 
     # The pickup store the customer selected
     pickup_store = session.get('selected_store_id')
@@ -1159,8 +1153,9 @@ def purchase_thanks():
         # Shows a general message if the customer hasn't saved a favourite store
         store_name = store_row[0] if store_row and store_row[0] else "your preferred store"
 
-    except sqlite3.Error as e:
-        print(f"Database transaction failure: {e}")
+    except sqlite3.Error:
+        db.rollback()
+        app.logger.exception("Database transaction failed while placing an order")
         return "An internal error occurred saving your transaction.", 500
 
     # Shows the thank you page, with the store, order number, pickup time, and total price
@@ -1175,4 +1170,4 @@ def purchase_thanks():
 # Starts the website running
 if __name__ == "__main__":
     migrate_passwords()
-    app.run(debug=True)
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")

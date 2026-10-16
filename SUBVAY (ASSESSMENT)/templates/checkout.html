@@ -99,7 +99,9 @@
                     <span id="cart-total-value">${{ "%.2f"|format(grand_total) }}</span>
                 </div>
                 {% if items %}
-                <a href="{{ url_for('purchase_thanks') }}" class="proceed-btn">Purchase</a>
+                <form action="{{ url_for('purchase_thanks') }}" method="POST">
+                    <button type="submit" class="proceed-btn">Purchase</button>
+                </form>
                 {% else %}
                 <button class="proceed-btn" disabled>Purchase</button>
                 {% endif %}
